@@ -78,7 +78,8 @@ def get_df_list(dirname:list ='csv', naming_convention: dict =TUDE_NAME, flight_
         raise Exception(f"The last part of the name should be a number")
     for idx, csv_file in enumerate(name_list):
         if not (idx in excl_index):
-            df = pd.read_csv(f"{dirname}/{csv_file}")[naming_convention.keys()]
+            # df = pd.read_csv(f"{dirname}/{csv_file}")[naming_convention.keys()]
+            df = pd.read_pickle(f"{dirname}/{csv_file.replace('csv','pkl')}")[naming_convention.keys()]
             df = df[df['time'].notna()]
             df.sort_values(by='time', inplace = True)
             df.reset_index(inplace=True, drop=True)
@@ -137,7 +138,7 @@ def initialize_quality_df(overview_df:pd.DataFrame, dfs_list:List[pd.DataFrame],
 
 ### Outlier removal ###
 
-def apply_cut_off(cut_off_points:dict, df:pd.DataFrame, i:int, print_warning:bool=False) -> (pd.DataFrame, float):
+def apply_cut_off(cut_off_points:dict, df:pd.DataFrame, i:int, print_warning:bool=False) -> list[pd.DataFrame, float]:
     '''
     Removes outliers based on the amount of change from one to the next.
 
@@ -418,11 +419,11 @@ if __name__ == '__main__':
     parser.add_argument("--overview_file", type=str, default=None, help="The path to the overview file. If not provided quality statement will not be made.")
     parser.add_argument("--figs", type=bool, default=True, help="Whether to save the comparison figures")
     parser.add_argument("--save_folder", type=str, default=None, help="The path to the folder where the results and smoothed csvs should be stored.")
-    parser.add_argument("--plot_columns", nargs="*", type=str, default=['ts', 'alt', 'spd', 'roc'],
-                        help="The labels of the columns that should be plotted if figs=True")
+    parser.add_argument("--plot_columns", nargs="*", type=str, default=['ts', 'alt', 'spd', 'roc'], help="The labels of the columns that should be plotted if figs=True")
     parser.add_argument("--flights", type=int, default=None, help="The amount of flights to pre process from the folder (they are randomly sampled from the folder). If None all flights will be taken into consideration.")
-    parser.add_argument("--columns", nargs="*", type=str, default=['ts', 'alt', 'spd', 'roc'], help="The labels of the columns that need to be prprocessed.")
+    parser.add_argument("--columns", nargs="*", type=str, default=['ts', 'alt', 'spd', 'roc', "hdg"], help="The labels of the columns that need to be prprocessed.")
     parser.add_argument("--extra_outlier", nargs="*", type=str, default=['alt', 'spd', 'roc'], help="The labels of the columns on which additional outlier removal should be performed.")
+    
 
     args = parser.parse_args()
     folder = args.folder
@@ -444,9 +445,12 @@ if __name__ == '__main__':
     if not os.path.exists(f'{save_folder}'):
         os.makedirs(f'{save_folder}')
 
-    ### Initialization
+    processed_csvs = os.listdir(path = f"{folder}_preprocessed/csvs") # If restarting code, read preprocessed folder for completed items
+    processed_csvs = [int(csvs.replace("flight_","").replace(".csv","")) for csvs in processed_csvs]
 
-    csvs, number_conversion = get_df_list(dirname=folder, number_of_samples=number_of_flights)
+    ### Initialization
+    
+    csvs, number_conversion = get_df_list(dirname=folder, number_of_samples=number_of_flights, excl_index=processed_csvs)
     print("Successfully imported files")
     dfs = [csv[smooth_cols].copy() for csv in csvs]
     dfs, rep_vals = zip(*[nan_same_values(df.copy()) for df in dfs])
@@ -525,7 +529,6 @@ if __name__ == '__main__':
         good = quality_df['percentage_invalid_values'].quantile(0.1)
         statement = []
         for i, r in quality_df.iterrows():
-            # print(r)
             if pd.isna(r['departure']) or pd.isna(r['destination']):
                 statement.append('bad')
             elif r['percentage_invalid_values'] <= good:
@@ -547,7 +550,7 @@ if __name__ == '__main__':
     if figs:
         if not os.path.exists(f'{save_folder}/images'):
             os.makedirs(f'{save_folder}/images')
-        compare_dfs = get_comparison(time_index_csvs, dfs, ["ts", "alt", "spd"])
+        compare_dfs = get_comparison(time_index_csvs, dfs, ["ts", "alt", "spd", "hdg"])
         for idx, df in enumerate(compare_dfs):
             title = f"Flight number {idx} ({number_conversion[idx]})"
             plot_comparisons(df, ['alt', 'spd'], title=title,
@@ -558,8 +561,10 @@ if __name__ == '__main__':
 
     for i, df in enumerate(dfs):
         df.reset_index(inplace=True)
-        i1 = df[['alt', 'spd', 'roc']].apply(pd.Series.first_valid_index).max()
-        i2 = df[['alt', 'spd', 'roc']].apply(pd.Series.last_valid_index).min()
+
+        i1 = df[['alt', 'spd', 'roc', "hdg"]].apply(pd.Series.first_valid_index).max()
+        i2 = df[['alt', 'spd', 'roc', "hdg"]].apply(pd.Series.last_valid_index).min()
+
         df = df.loc[i1:i2]
         df.reset_index(inplace=True)
         df.loc[:, 'roc'] = df['roc'] * 196.85  # m/s -> ft/min
@@ -568,3 +573,5 @@ if __name__ == '__main__':
         df.to_csv(f"{save_folder}/csvs/flight_{number_conversion[i]}.csv", index=False)
 
         df.ts = df.ts - df.ts[0]
+
+      
